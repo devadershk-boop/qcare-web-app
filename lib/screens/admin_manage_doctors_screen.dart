@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import '../data/doctor_data.dart';
+import '../services/api_service.dart';
 
 class AdminManageDoctorsScreen extends StatefulWidget {
-  const AdminManageDoctorsScreen({super.key});
+  final String hospitalName;
+
+  const AdminManageDoctorsScreen({super.key, required this.hospitalName});
 
   @override
   State<AdminManageDoctorsScreen> createState() =>
@@ -12,13 +15,32 @@ class AdminManageDoctorsScreen extends StatefulWidget {
 class _AdminManageDoctorsScreenState
     extends State<AdminManageDoctorsScreen> {
   static const Color primaryColor = Color(0xFF0F766E); // Qcare teal
+  
+  List<dynamic> doctors = [];
+  bool isLoading = true;
 
-  final TextEditingController nameController =
-      TextEditingController();
-  final TextEditingController emailController =
-      TextEditingController();
+  @override
+  void initState() {
+    super.initState();
+    _fetchDoctors();
+  }
 
-  String selectedDepartment = 'Cardiology';
+  Future<void> _fetchDoctors() async {
+    try {
+      final fetchedDoctors = await ApiService.getDoctors();
+      setState(() {
+        doctors = fetchedDoctors;
+        isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        isLoading = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error fetching doctors: $e')),
+      );
+    }
+  }
 
   final List<String> departments = [
     'Cardiology',
@@ -27,35 +49,80 @@ class _AdminManageDoctorsScreenState
     'Pediatrics',
   ];
 
-  void _addDoctor() {
-    if (nameController.text.isEmpty ||
-        emailController.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please fill all fields'),
+
+
+  void _editDoctor(int index) {
+    final doctor = doctors[index];
+    final TextEditingController editNameController =
+        TextEditingController(text: doctor['name']);
+    final TextEditingController editSpecializationController =
+        TextEditingController(text: doctor['specialization'] ?? '');
+    String editSelectedDepartment = doctor['department_name'] ?? 'Cardiology';
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Edit Doctor'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: editNameController,
+                  decoration: const InputDecoration(labelText: 'Doctor Name'),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: editSpecializationController,
+                  decoration: const InputDecoration(labelText: 'Specialization'),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: TextEditingController(
+                      text: editSelectedDepartment),
+                  onChanged: (value) {
+                    editSelectedDepartment = value;
+                  },
+                  decoration: const InputDecoration(labelText: 'Department'),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: primaryColor),
+              onPressed: () async {
+                try {
+                  await ApiService.updateDoctor(
+                    doctor['doctor_id'],
+                    name: editNameController.text,
+                    department: editSelectedDepartment,
+                    specialization: editSpecializationController.text,
+                    hospitalName: widget.hospitalName,
+                  );
+                  Navigator.pop(context);
+                  _fetchDoctors();
+                } catch (e) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Update failed: $e')),
+                  );
+                }
+              },
+              child: const Text('Save', style: TextStyle(color: Colors.white)),
+            ),
+          ],
         ),
-      );
-      return;
-    }
-
-    DoctorData.addDoctor(
-      name: nameController.text,
-      department: selectedDepartment,
-    );
-
-    nameController.clear();
-    emailController.clear();
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Doctor added successfully'),
       ),
     );
-
-    setState(() {});
   }
 
   void _confirmDeleteDoctor(int index) {
+    final doctor = doctors[index];
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -72,10 +139,16 @@ class _AdminManageDoctorsScreenState
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.red.shade600,
             ),
-            onPressed: () {
-              DoctorData.doctors.removeAt(index);
-              Navigator.pop(context);
-              setState(() {});
+            onPressed: () async {
+              try {
+                await ApiService.deleteDoctor(doctor['doctor_id']);
+                Navigator.pop(context);
+                _fetchDoctors();
+              } catch (e) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Delete failed: $e')),
+                );
+              }
             },
             child: const Text(
               'Delete',
@@ -107,78 +180,6 @@ class _AdminManageDoctorsScreenState
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ➕ ADD DOCTOR
-            const Text(
-              'Add New Doctor',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-
-            const SizedBox(height: 16),
-
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(
-                labelText: 'Doctor Name',
-                prefixIcon: Icon(Icons.person),
-              ),
-            ),
-
-            const SizedBox(height: 12),
-
-            TextField(
-              controller: emailController,
-              decoration: const InputDecoration(
-                labelText: 'Email',
-                prefixIcon: Icon(Icons.email),
-              ),
-            ),
-
-            const SizedBox(height: 12),
-
-            DropdownButtonFormField<String>(
-              value: selectedDepartment,
-              items: departments
-                  .map(
-                    (dept) => DropdownMenuItem(
-                      value: dept,
-                      child: Text(dept),
-                    ),
-                  )
-                  .toList(),
-              onChanged: (value) {
-                setState(() {
-                  selectedDepartment = value!;
-                });
-              },
-              decoration: const InputDecoration(
-                labelText: 'Department',
-                prefixIcon: Icon(Icons.local_hospital),
-              ),
-            ),
-
-            const SizedBox(height: 20),
-
-            SizedBox(
-              width: double.infinity,
-              height: 48,
-              child: ElevatedButton.icon(
-                onPressed: _addDoctor,
-                icon: const Icon(Icons.add),
-                label: const Text(
-                  'Add Doctor',
-                  style: TextStyle(fontWeight: FontWeight.w600),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: primaryColor,
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 30),
-
             // 📋 DOCTOR LIST
             const Text(
               'Doctor List',
@@ -190,21 +191,21 @@ class _AdminManageDoctorsScreenState
 
             const SizedBox(height: 16),
 
-            DoctorData.doctors.isEmpty
-                ? const Text(
-                    'No doctors added yet',
-                    style: TextStyle(color: Colors.grey),
-                  )
-                : ListView.builder(
-                    shrinkWrap: true,
-                    physics:
-                        const NeverScrollableScrollPhysics(),
-                    itemCount: DoctorData.doctors.length,
-                    itemBuilder: (context, index) {
-                      final doctor =
-                          DoctorData.doctors[index];
+            isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : doctors.isEmpty
+                    ? const Text(
+                        'No doctors added yet',
+                        style: TextStyle(color: Colors.grey),
+                      )
+                    : ListView.builder(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: doctors.length,
+                        itemBuilder: (context, index) {
+                          final doctor = doctors[index];
 
-                      return Container(
+                          return Container(
                         margin:
                             const EdgeInsets.only(bottom: 12),
                         padding: const EdgeInsets.all(14),
@@ -244,13 +245,23 @@ class _AdminManageDoctorsScreenState
                                   ),
                                   const SizedBox(height: 4),
                                   Text(
-                                    doctor['department']!,
+                                    "${doctor['department_name']} | ${doctor['specialization'] ?? 'General'}",
                                     style: const TextStyle(
                                       color: Colors.grey,
+                                      fontSize: 12,
                                     ),
                                   ),
                                 ],
                               ),
+                            ),
+                            IconButton(
+                              icon: const Icon(
+                                Icons.edit_rounded,
+                                color: primaryColor,
+                              ),
+                              onPressed: () {
+                                _editDoctor(index);
+                              },
                             ),
                             IconButton(
                               icon: const Icon(
