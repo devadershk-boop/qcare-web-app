@@ -8,10 +8,12 @@ class ApiService {
   // BASE URL
   // =========================
   static String get baseUrl {
-    if (kIsWeb) {
+    if (kReleaseMode) {
+      return 'https://qcare-web-app.onrender.com';
+    } else if (kIsWeb) {
       return 'http://localhost:5000';
     } else {
-      return 'http://192.168.1.2:5000'; // change if IP changes
+      return 'http://192.168.1.2:5000'; 
     }
   }
 

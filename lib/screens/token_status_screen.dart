@@ -65,7 +65,7 @@ class _TokenStatusScreenState extends State<TokenStatusScreen> {
           final myTokenVal = double.tryParse(token.toString()) ?? 0;
           
           waitingAheadCount = doctorQueue
-            .where((a) => a['status'] == "WAITING" && a['date'] == apptDate && (double.tryParse(a['token'].toString()) ?? 0) < myTokenVal)
+            .where((a) => a['status'] == "WAITING" && a['date'] == apptDate && (double.tryParse((a['token_number'] ?? a['token']).toString()) ?? 0) < myTokenVal)
             .length;
 
           // For wait time, we only care about people in the current "Today" queue if the appt is today,
@@ -73,7 +73,7 @@ class _TokenStatusScreenState extends State<TokenStatusScreen> {
           peopleAheadForWait = doctorQueue
             .where((a) => 
                (a['date'] == apptDate && a['status'] == "IN_PROGRESS") || 
-               (a['status'] == "WAITING" && a['date'] == apptDate && (double.tryParse(a['token'].toString()) ?? 0) < myTokenVal)
+               (a['status'] == "WAITING" && a['date'] == apptDate && (double.tryParse((a['token_number'] ?? a['token']).toString()) ?? 0) < myTokenVal)
             ).length;
         }
 
@@ -114,10 +114,9 @@ class _TokenStatusScreenState extends State<TokenStatusScreen> {
         // Fix: Explicitly prevent doctorOnBreak today from poisoning future tokens' ETAs
         final breakDuration = (isOnBreak && isToday) ? 15 : 0;
         
-        // peopleAheadForWait already includes the IN_PROGRESS token. 
-        // We subtract 1 from peopleAheadForWait to exclude the currently running patient,
-        // then add the average time for everyone else, plus the remaining active time of the current patient.
-        int waitFromOthers = (peopleAheadForWait > 0 ? (peopleAheadForWait - 1) : 0) * avgTimeVal;
+        // waitingAheadCount exactly defines the number of people waiting to be seen before this token.
+        // It does not include the IN_PROGRESS patient (whom we track separately if one exists).
+        int waitFromOthers = waitingAheadCount * avgTimeVal;
         
         // The total wait relative to RIGHT NOW depends on how much time the active patient has left,
         // plus the average time of everyone else waiting in line.
@@ -129,6 +128,8 @@ class _TokenStatusScreenState extends State<TokenStatusScreen> {
 
         // Calculate true Live ETA instead of relying solely on the static booking time configuration.
         String displayEta = appt['time'] ?? '—';
+        int displayWaitTrackerMins = estimatedWaitMins;
+
         if (!isCompleted) {
           try {
             final components = displayEta.split(' ');
@@ -143,8 +144,9 @@ class _TokenStatusScreenState extends State<TokenStatusScreen> {
 
             DateTime staticTime = DateTime(now.year, now.month, now.day, h, m);
             
-            // For static time calculation (if queue never started), we apply full average offset of others + any global delays.
-            int offsetDelay = waitFromOthers + overdueDelay;
+            // The booked time slot (h:m) already includes the average spacing from previous appointments.
+            // We only need to add any global overdue delay.
+            int offsetDelay = overdueDelay;
             staticTime = staticTime.add(Duration(minutes: offsetDelay));
 
             DateTime calculateTime;
@@ -179,7 +181,7 @@ class _TokenStatusScreenState extends State<TokenStatusScreen> {
         final Map<String, dynamic> enriched = {
           ...Map<String, dynamic>.from(appt),
           "queuePosition": isCompleted ? 0 : waitingAheadCount + 1,
-          "estimated": isCompleted ? "—" : "$estimatedWaitMins mins",
+          "estimated": isCompleted ? "—" : "$displayWaitTrackerMins mins",
           "eta": isCompleted ? "—" : displayEta,
           "doctorOnBreak": (isOnBreak && isToday), // Only show orange border if their physical appointment is today
           "isDelayed": overdueDelay > 0,
