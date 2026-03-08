@@ -88,14 +88,23 @@ class _TokenStatusScreenState extends State<TokenStatusScreen> {
         
         if (hasInProgress && deptStartStr != null) {
           try {
-            // Ensure the string is treated as UTC
+            // Provide fallback parsing if the string lacks timezone info
             String isoStr = deptStartStr;
             if (!isoStr.contains('Z') && !isoStr.contains('+')) {
               isoStr = "${isoStr.replaceFirst(' ', 'T')}Z";
             }
+            
+            // Postgres timestamp is UTC, so we parse it as UTC
             final startedAt = DateTime.parse(isoStr).toUtc();
             final now = DateTime.now().toUtc();
-            final elapsed = now.difference(startedAt).inMinutes;
+            
+            // Calculate elapsed time
+            int elapsed = now.difference(startedAt).inMinutes;
+
+            // Clamp elapsed time to a logical maximum (e.g., 60 mins) to prevent runaway ETAs
+            // due to timezone parsing issues or forgot-to-complete-patient bugs
+            if (elapsed < 0) elapsed = 0;
+            if (elapsed > 60) elapsed = 60;
             
             if (elapsed >= avgTimeVal) {
               overdueDelay = elapsed - avgTimeVal;
@@ -124,11 +133,10 @@ class _TokenStatusScreenState extends State<TokenStatusScreen> {
         
         // Because display is often "Wait Time: X mins", we show the total duration they'll be sitting.
         // It should equal the absolute ETA relative to the current time.
-        final int estimatedWaitMins = totalWaitFromNow;
+        int estimatedWaitMins = 0;
 
         // Calculate true Live ETA instead of relying solely on the static booking time configuration.
         String displayEta = appt['time'] ?? '—';
-        int displayWaitTrackerMins = estimatedWaitMins;
 
         if (!isCompleted) {
           try {
@@ -140,48 +148,53 @@ class _TokenStatusScreenState extends State<TokenStatusScreen> {
             if (isPm && h < 12) h += 12;
             if (!isPm && h == 12) h = 0;
 
-            bool queueHasStartedToday = doctorQueue.any((a) => a['status'] == "IN_PROGRESS" || a['status'] == "COMPLETED");
+            final DateTime staticTime = DateTime(now.year, now.month, now.day, h, m);
+            final DateTime earliestPossibleTime = now.add(Duration(minutes: totalWaitFromNow));
 
-            DateTime staticTime = DateTime(now.year, now.month, now.day, h, m);
-            
-            // The booked time slot (h:m) already includes the average spacing from previous appointments.
-            // We only need to add any global overdue delay.
-            int offsetDelay = overdueDelay;
-            staticTime = staticTime.add(Duration(minutes: offsetDelay));
+            bool queueHasStartedToday = doctorQueue.any((a) => a['status'] == "IN_PROGRESS" || a['status'] == "COMPLETED");
 
             DateTime calculateTime;
             
-            bool isLateToStart = isToday && !queueHasStartedToday && now.isAfter(staticTime);
-            
-            if (isToday && (queueHasStartedToday || isLateToStart)) {
-               // If queue is actively running today, or the doctor is late to start, ETA pushes strictly from RIGHT NOW
-               calculateTime = now.add(Duration(minutes: totalWaitFromNow));
+            if (isToday) {
+               // If the calculated wait from now pushes us past our static appointment time, we use that.
+               // This ensures that if Position 1 is late, Position 2's wait time correctly reflects the gap.
+               if (earliestPossibleTime.isAfter(staticTime)) {
+                 calculateTime = earliestPossibleTime;
+                 estimatedWaitMins = totalWaitFromNow;
+               } else {
+                 calculateTime = staticTime;
+                 estimatedWaitMins = staticTime.difference(now).inMinutes;
+               }
+               
+               if (estimatedWaitMins < 0) estimatedWaitMins = 0;
             } else {
-               // If it's a future day or queue hasn't begun (and not late yet), rely on static booked time
                calculateTime = staticTime;
+               estimatedWaitMins = calculateTime.difference(now).inMinutes;
+               if (estimatedWaitMins < 0) estimatedWaitMins = 0;
             }
 
             final newH = calculateTime.hour == 0 ? 12 : (calculateTime.hour > 12 ? calculateTime.hour - 12 : calculateTime.hour);
             final newM = calculateTime.minute.toString().padLeft(2, '0');
             final newAmPm = calculateTime.hour >= 12 ? 'PM' : 'AM';
             
-            // Mark it as actively tracking if it's running live or delayed
+            final bool pushedByDelay = calculateTime.isAfter(staticTime.add(const Duration(seconds: 30)));
+
             if (isToday && queueHasStartedToday) {
                displayEta = "$newH:$newM $newAmPm (Live)";
-            } else if (isLateToStart || overdueDelay > 0) {
+            } else if (pushedByDelay || overdueDelay > 0) {
                displayEta = "$newH:$newM $newAmPm (Delayed)";
             } else {
                displayEta = "$newH:$newM $newAmPm";
             }
           } catch (e) {
-            // Fallback to original
+            // Fallback
           }
         }
 
         final Map<String, dynamic> enriched = {
           ...Map<String, dynamic>.from(appt),
           "queuePosition": isCompleted ? 0 : waitingAheadCount + 1,
-          "estimated": isCompleted ? "—" : "$displayWaitTrackerMins mins",
+          "estimated": isCompleted ? "—" : "$estimatedWaitMins mins",
           "eta": isCompleted ? "—" : displayEta,
           "doctorOnBreak": (isOnBreak && isToday), // Only show orange border if their physical appointment is today
           "isDelayed": overdueDelay > 0,

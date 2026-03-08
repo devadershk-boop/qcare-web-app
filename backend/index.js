@@ -8,7 +8,7 @@ const port = process.env.PORT || 5000;
 
 // Supabase Connection Configuration
 const db = new Pool({
-  connectionString: 'postgresql://postgres.kkhyyhqlsrsayainqgwj:YvDJrjQVRuHLoAVU@aws-1-ap-southeast-2.pooler.supabase.com:6543/postgres',
+  connectionString: process.env.DATABASE_URL || 'postgresql://postgres.kkhyyhqlsrsayainqgwj:YvDJrjQVRuHLoAVU@aws-1-ap-southeast-2.pooler.supabase.com:6543/postgres',
   ssl: {
     rejectUnauthorized: false
   }
@@ -144,10 +144,10 @@ app.post('/departments', async (req, res) => {
       [name]
     );
 
-    // Also initialize or update wait time
+    // Also initialize or update wait time - LOCKED TO 2
     await db.query(
-      'INSERT INTO DepartmentWaitTimes (department_name, avg_time_minutes, hospital_name) VALUES ($1, $2, $3) ON CONFLICT (department_name) DO UPDATE SET avg_time_minutes = EXCLUDED.avg_time_minutes',
-      [name, avg_time_minutes || 2, hospital_name]
+      'INSERT INTO DepartmentWaitTimes (department_name, avg_time_minutes, hospital_name) VALUES ($1, $2, $3) ON CONFLICT (department_name) DO UPDATE SET avg_time_minutes = 2',
+      [name, 2, hospital_name]
     );
 
     res.status(201).json({ message: 'Department and wait time initialized' });
@@ -577,12 +577,10 @@ app.patch('/appointments/:id/status', async (req, res) => {
         AND a.appointment_id = $1
       `, [id]);
     } else if (status === 'COMPLETED') {
-      // Recalculate rolling average
+      // Just clear current_consultation_start, avg_time_minutes is fixed at 2
       await db.query(`
           UPDATE DepartmentWaitTimes dwt
-          SET 
-             avg_time_minutes = GREATEST(1, ROUND((avg_time_minutes * 3.0 + EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - current_consultation_start))/60.0) / 4.0)),
-             current_consultation_start = NULL
+          SET current_consultation_start = NULL
           FROM Departments dep, Doctors d, Appointments a
           WHERE dwt.department_name = dep.department_name
           AND d.department_id = dep.department_id
@@ -612,17 +610,7 @@ app.post('/appointments/call-next/:doctor', async (req, res) => {
     if (drRes.rows.length === 0) return res.status(404).json({ error: 'Doctor not found' });
     const doctorId = drRes.rows[0].doctor_id;
 
-    // 1.5 Calculate and apply rolling average from the previously running session
-    await db.query(`
-      UPDATE DepartmentWaitTimes dwt
-      SET 
-         avg_time_minutes = GREATEST(1, ROUND((avg_time_minutes * 3.0 + EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - current_consultation_start))/60.0) / 4.0))
-      FROM Departments dep, Doctors d
-      WHERE dwt.department_name = dep.department_name
-      AND d.department_id = dep.department_id
-      AND d.doctor_id = $1
-      AND dwt.current_consultation_start IS NOT NULL
-    `, [doctorId]);
+    // 1.5 (Removed rolling average calculation)
 
     // 2. Find current IN_PROGRESS for this doctor and set it to COMPLETED
     let updateQuery = `

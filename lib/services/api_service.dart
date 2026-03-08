@@ -7,13 +7,24 @@ class ApiService {
   // =========================
   // BASE URL
   // =========================
+  // =========================
+  // BASE URL
+  // =========================
+  // TIP: You can pass your actual Vercel backend URL during build using:
+  // flutter build web --release --dart-define=BASE_URL=https://your-real-backend.vercel.app
   static String get baseUrl {
+    const String? definedUrl = String.fromEnvironment('BASE_URL');
+    if (definedUrl != null && definedUrl.isNotEmpty) {
+      return definedUrl;
+    }
+
     if (kReleaseMode) {
-      return 'https://qcare-web-app.onrender.com';
+      // Current production backend on Render
+      return 'https://qcare-web-app.onrender.com'; 
     } else if (kIsWeb) {
       return 'http://localhost:5000';
     } else {
-      return 'http://192.168.1.2:5000'; 
+      return 'http://10.0.2.2:5000'; // Android Emulator default
     }
   }
 
